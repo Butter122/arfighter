@@ -28,32 +28,37 @@ from config import (
     Y_VAL_PATH,
 )
 
+# Maps raw directory names → label index (punch_left + punch_right both → punch)
+DIR_TO_LABEL: dict[str, int] = {
+    "punch_left": 0,
+    "punch_right": 0,
+    "punch": 0,
+    "kick": 1,
+    "block": 2,
+    "ranged_attack": 3,
+}
+
 
 def load_raw_data() -> tuple[np.ndarray, np.ndarray]:
     """Load all .npy files from data/raw/ and return X, y arrays.
 
-    Each .npy file has shape (SEQUENCE_LENGTH, INPUT_SIZE).
-
-    Returns:
-        X: (N, SEQUENCE_LENGTH, INPUT_SIZE) float32 array.
-        y: (N,) int64 array of class labels.
+    punch_left and punch_right are merged into a single "punch" label.
+    Directories not in DIR_TO_LABEL (idle, jump, etc.) are silently skipped.
     """
     X_list: list[np.ndarray] = []
     y_list: list[int] = []
 
-    # Build reverse mapping: action_name -> label
-    name_to_label = {v: k for k, v in ACTION_CLASSES.items()}
-
     action_dirs = sorted(
-        d for d in RAW_DIR.iterdir() if d.is_dir() and d.name in name_to_label
+        d for d in RAW_DIR.iterdir() if d.is_dir() and d.name in DIR_TO_LABEL
     )
     if not action_dirs:
         raise FileNotFoundError(
-            f"No action directories found in {RAW_DIR}. Run collect.py first."
+            f"No recognised action directories found in {RAW_DIR}. "
+            f"Expected: {sorted(set(DIR_TO_LABEL.keys()))}. Run collect.py first."
         )
 
     for action_dir in action_dirs:
-        label = name_to_label[action_dir.name]
+        label = DIR_TO_LABEL[action_dir.name]
         npy_files = sorted(action_dir.glob("*.npy"))
         if not npy_files:
             print(f"  Warning: no .npy files in {action_dir}")
@@ -65,7 +70,7 @@ def load_raw_data() -> tuple[np.ndarray, np.ndarray]:
                 continue
             X_list.append(arr)
             y_list.append(label)
-        print(f"  {action_dir.name}: {len(npy_files)} samples")
+        print(f"  {action_dir.name}: {len(npy_files)} samples → label {label}")
 
     if not X_list:
         raise ValueError("No valid samples found. Check data/raw/ contents.")

@@ -19,13 +19,13 @@ SCALER_PATH = PROCESSED_DIR / "scaler.pkl"
 BEST_MODEL_PATH = MODEL_DIR / "best_model.pth"
 
 # -- Action classes
+#   Model trains on 4 classes. "idle" is a fallback at inference time
+#   when confidence is below the threshold.
 ACTION_CLASSES: dict[int, str] = {
-    0: "idle",
-    1: "punch_left",
-    2: "punch_right",
-    3: "kick",
-    4: "block",
-    5: "jump",
+    0: "punch",
+    1: "kick",
+    2: "block",
+    3: "ranged_attack",
 }
 
 NUM_CLASSES: int = len(ACTION_CLASSES)
@@ -52,3 +52,4 @@ NUM_EPOCHS: int = 50
 
 # -- Inference
 INFERENCE_EVERY_N_FRAMES: int = 5
+CONFIDENCE_THRESHOLD: float = 0.6  # below this → classified as "idle"

@@ -17,6 +17,11 @@ import numpy as np
 
 from config import ACTION_CLASSES, FEATURES_PER_LANDMARK, NUM_LANDMARKS, RAW_DIR, SEQUENCE_LENGTH
 
+# CLI accepts the merged action names + legacy directional names
+CLI_ACTIONS: list[str] = sorted(set(
+    list(ACTION_CLASSES.values()) + ["punch_left", "punch_right"]
+))
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -27,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         "--action",
         type=str,
         required=True,
-        choices=list(ACTION_CLASSES.values()),
+        choices=CLI_ACTIONS,
         help="Action label to record.",
     )
     parser.add_argument(

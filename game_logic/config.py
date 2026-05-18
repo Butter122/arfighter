@@ -6,12 +6,11 @@ INVINCIBLE_FRAMES: int = 20
 CHIP_DAMAGE: int = 2
 
 DAMAGE_TABLE: dict[str, int] = {
-    "punch_left": 10,
-    "punch_right": 10,
+    "punch": 10,
     "kick": 20,
+    "ranged_attack": 15,
     "block": 0,
     "idle": 0,
-    "jump": 0,
 }
 
-ATTACK_ACTIONS: set[str] = {"punch_left", "punch_right", "kick"}
+ATTACK_ACTIONS: set[str] = {"punch", "kick", "ranged_attack"}

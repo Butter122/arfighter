@@ -1,115 +1,128 @@
 using System;
 using System.Collections;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 using ARFighter.Game;
 
 /// <summary>
-/// WebSocket client that connects to the inference service and game server.
-/// Uses UnityWebRequest for HTTP POST (frame upload) and a WebSocket library
-/// for real-time game state.
-///
-/// Recommended WebSocket asset: NativeWebSocket (open source, GitHub)
-/// Install via UPM: https://github.com/endel/NativeWebSocket.git#upm
+/// WebSocket client using only built-in .NET APIs (no external packages).
+/// Connects to the game server for real-time state and to the inference
+/// service for frame uploads.
 /// </summary>
 namespace ARFighter.Network
 {
     public class GameClient : MonoBehaviour
     {
         [Header("Servers")]
-        [SerializeField] private string _inferenceServerIP = "192.168.1.100";
-        [SerializeField] private int _inferencePort = 8001;
+        [SerializeField] private string _serverIP = "192.168.1.100";
 
         // Events
         public event Action<ServerMessage> OnStateUpdated;
         public event Action<string> OnConnected;
         public event Action<string> OnDisconnected;
-        public event Action<InferenceResponse> OnInferenceResult;
 
         // State
         public string PlayerId { get; private set; }
         public bool IsConnected { get; private set; }
 
-        private WebSocket _gameWs;
-        private string _gameServerUrl => $"ws://{_inferenceServerIP}:8000/ws";
-        private bool _shouldReconnect = true;
+        private ClientWebSocket _ws;
+        private CancellationTokenSource _cts;
+        private string _gameServerUrl => $"ws://{_serverIP}:8000/ws";
+        private string _inferenceUrl => $"http://{_serverIP}:8001/frame";
 
         private void Start()
         {
-            StartCoroutine(ConnectToGameServer());
+            _ = ConnectLoopAsync();
         }
 
         private void OnDestroy()
         {
-            _shouldReconnect = false;
-            _gameWs?.Close();
+            Disconnect();
         }
 
-        // ---- Game Server WebSocket ----
+        // ---- Game Server WebSocket (built-in System.Net.WebSockets) ----
 
-        private IEnumerator ConnectToGameServer()
+        private async Task ConnectLoopAsync()
         {
-            // Wait a frame for NativeWebSocket setup, then create
-            yield return null;
-
-            _gameWs = new WebSocket(_gameServerUrl);
-
-            _gameWs.OnOpen += () =>
+            while (this != null)
             {
-                IsConnected = true;
-                Debug.Log($"[GameClient] Connected to game server");
-            };
-
-            _gameWs.OnMessage += (bytes) =>
-            {
-                var json = System.Text.Encoding.UTF8.GetString(bytes);
-                Debug.Log($"[GameClient] Received: {json}");
-
-                // Check for welcome message
-                if (json.Contains("\"type\":\"welcome\""))
+                try
                 {
-                    var welcome = JsonUtility.FromJson<WelcomeMessage>(json);
-                    PlayerId = welcome.player_id;
-                    OnConnected?.Invoke(PlayerId);
-                    return;
+                    _cts = new CancellationTokenSource();
+                    _ws = new ClientWebSocket();
+                    await _ws.ConnectAsync(new Uri(_gameServerUrl), _cts.Token);
+
+                    IsConnected = true;
+                    Debug.Log("[GameClient] Connected to game server");
+
+                    // Read loop (runs on thread pool, dispatches to main thread)
+                    await ReceiveLoopAsync(_cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[GameClient] Connection failed: {ex.Message}");
+                }
+                finally
+                {
+                    IsConnected = false;
+                    _ws?.Dispose();
+                    _ws = null;
                 }
 
-                // Parse as game state
-                var state = JsonUtility.FromJson<ServerMessage>(json);
-                UnityMainThreadDispatcher.Instance.Enqueue(() =>
-                {
-                    OnStateUpdated?.Invoke(state);
-                });
-            };
-
-            _gameWs.OnError += (err) =>
-            {
-                Debug.LogError($"[GameClient] WebSocket error: {err}");
-            };
-
-            _gameWs.OnClose += (code) =>
-            {
-                IsConnected = false;
-                OnDisconnected?.Invoke($"Closed: {code}");
-                if (_shouldReconnect)
-                    StartCoroutine(ReconnectRoutine());
-            };
-
-            _gameWs.Connect();
+                OnDisconnected?.Invoke("Reconnecting...");
+                await Task.Delay(3000, CancellationToken.None);
+            }
         }
 
-        private IEnumerator ReconnectRoutine()
+        private async Task ReceiveLoopAsync(CancellationToken ct)
         {
-            yield return new WaitForSeconds(3f);
-            if (_shouldReconnect)
-                StartCoroutine(ConnectToGameServer());
+            var buffer = new byte[4096];
+
+            while (_ws?.State == WebSocketState.Open && !ct.IsCancellationRequested)
+            {
+                var result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+
+                var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                Debug.Log($"[GameClient] Received: {json}");
+
+                // Dispatch to main thread
+                UnityMainThreadDispatcher.Instance?.Enqueue(() => ProcessMessage(json));
+            }
+        }
+
+        private void ProcessMessage(string json)
+        {
+            if (json.Contains("\"type\":\"welcome\""))
+            {
+                var welcome = JsonUtility.FromJson<WelcomeMessage>(json);
+                PlayerId = welcome.player_id;
+                OnConnected?.Invoke(PlayerId);
+                return;
+            }
+
+            var state = JsonUtility.FromJson<ServerMessage>(json);
+            OnStateUpdated?.Invoke(state);
+        }
+
+        public void Disconnect()
+        {
+            _cts?.Cancel();
+            _ws?.Dispose();
+            _ws = null;
+            IsConnected = false;
         }
 
         // ---- HTTP: Send frame to inference service ----
 
         public IEnumerator SendFrame(byte[] jpegBytes, string playerId)
         {
-            var url = $"http://{_inferenceServerIP}:{_inferencePort}/frame/{playerId}";
+            var url = $"{_inferenceUrl}/{playerId}";
 
             using var req = new UnityWebRequest(url, "POST");
             req.uploadHandler = new UploadHandlerRaw(jpegBytes);
@@ -120,41 +133,52 @@ namespace ARFighter.Network
 
             if (req.result == UnityWebRequest.Result.Success)
             {
-                var result = JsonUtility.FromJson<InferenceResponse>(
-                    req.downloadHandler.text);
-                if (result.action != null)
-                {
-                    OnInferenceResult?.Invoke(result);
-                    SendActionToGameServer(playerId, result.action);
-                }
-            }
-            else
-            {
-                Debug.LogWarning($"[GameClient] Frame upload failed: {req.error}");
+                var response = req.downloadHandler.text;
+                if (response.Contains("\"action\":null")) yield break;
+
+                var result = JsonUtility.FromJson<InferenceResponse>(response);
+                if (!string.IsNullOrEmpty(result.action))
+                    _ = SendActionToGameServer(playerId, result.action);
             }
         }
 
-        // ---- WebSocket: Send action to game server ----
+        // ---- Send action to game server ----
 
-        public void SendActionToGameServer(string playerId, string action)
+        public async Task SendActionToGameServer(string playerId, string action)
         {
-            if (_gameWs == null || !IsConnected) return;
+            if (_ws?.State != WebSocketState.Open) return;
 
-            var msg = new PlayerAction { player_id = playerId, action = action };
-            var json = JsonUtility.ToJson(msg);
-            _gameWs.SendText(json);
+            var json = JsonUtility.ToJson(new PlayerAction
+            {
+                player_id = playerId,
+                action = action
+            });
+
+            var bytes = Encoding.UTF8.GetBytes(json);
+            try
+            {
+                await _ws.SendAsync(
+                    new ArraySegment<byte>(bytes),
+                    WebSocketMessageType.Text,
+                    true,
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[GameClient] Send failed: {ex.Message}");
+            }
         }
 
         public void SendAction(string action)
         {
             if (!string.IsNullOrEmpty(PlayerId))
-                SendActionToGameServer(PlayerId, action);
+                _ = SendActionToGameServer(PlayerId, action);
         }
     }
 
     /// <summary>
-    /// Minimal singleton to dispatch callbacks onto Unity's main thread.
-    /// Attach to a GameObject in your scene.
+    /// Singleton to dispatch callbacks onto Unity's main thread.
+    /// Attach to a GameObject in your scene (e.g., on the GameManager object).
     /// </summary>
     public class UnityMainThreadDispatcher : MonoBehaviour
     {

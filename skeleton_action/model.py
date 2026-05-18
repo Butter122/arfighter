@@ -9,7 +9,7 @@ class ActionLSTM(nn.Module):
     """Two-layer LSTM for classifying 30-frame skeleton sequences.
 
     Input shape:  (batch, 30, 132) — 33 landmarks × 4 features each.
-    Output shape: (batch, 6)      — logits over 6 action classes.
+    Output shape: (batch, 4)      — logits over 4 action classes (plus idle fallback).
     """
 
     def __init__(
@@ -17,7 +17,7 @@ class ActionLSTM(nn.Module):
         input_size: int = 132,
         hidden_size: int = 128,
         num_layers: int = 2,
-        num_classes: int = 6,
+        num_classes: int = 4,
         dropout: float = 0.3,
     ) -> None:
         super().__init__()

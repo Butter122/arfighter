@@ -11,6 +11,7 @@ import torch
 from config import (
     ACTION_CLASSES,
     BEST_MODEL_PATH,
+    CONFIDENCE_THRESHOLD,
     INFERENCE_EVERY_N_FRAMES,
     INPUT_SIZE,
     HIDDEN_SIZE,
@@ -83,5 +84,8 @@ class ActionRecognizer:
             probs = torch.softmax(logits, dim=1)
             top_prob, top_idx = probs.max(dim=1)
 
+        conf = float(top_prob.item())
+        if conf < CONFIDENCE_THRESHOLD:
+            return "idle", conf
         label = ACTION_CLASSES.get(int(top_idx.item()), "idle")
-        return label, float(top_prob.item())
+        return label, conf

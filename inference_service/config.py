@@ -14,17 +14,17 @@ SEQUENCE_LENGTH: int = 30
 INPUT_SIZE: int = 132
 HIDDEN_SIZE: int = 128
 NUM_LAYERS: int = 2
-NUM_CLASSES: int = 6
+NUM_CLASSES: int = 4
 DROPOUT: float = 0.3
 
 ACTION_CLASSES: dict[int, str] = {
-    0: "idle",
-    1: "punch_left",
-    2: "punch_right",
-    3: "kick",
-    4: "block",
-    5: "jump",
+    0: "punch",
+    1: "kick",
+    2: "block",
+    3: "ranged_attack",
 }
+
+CONFIDENCE_THRESHOLD: float = 0.6  # below this → classified as "idle"
 
 # -- Server
 INFERENCE_PORT: int = 8001
